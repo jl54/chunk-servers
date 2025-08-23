@@ -1,4 +1,34 @@
 = Chunk Servers
-Jonas Lüthi
 
 The CLI-Tool to create minecraft servers on different providers.
+
+== Command list
+.Command list
+[cols="1,2,2"]
+|===
+| Command | Options | Description
+
+| create
+| - --name <server name> +
+  - --cores <amount of cores> +
+  - --memory <amount of memory>
+| Createas a new minecraft server
+
+| get
+| - --id <server id> +
+| Shows information about the server
+
+| list
+|
+| Lists all servers
+
+| update
+| - --cores <amount of cores>
+  - --memory <amount of memory>
+| Updates the server
+
+| delete
+| - --id <server id>
+  - --force <true|false>
+  - --purge <true|false>
+| Deletes the server
