@@ -23,12 +23,12 @@ The CLI-Tool to create minecraft servers on different providers.
 | Lists all servers
 
 | update
-| - --cores <amount of cores>
+| - --cores <amount of cores> +
   - --memory <amount of memory>
 | Updates the server
 
 | delete
-| - --id <server id>
-  - --force <true|false>
-  - --purge <true|false>
+| - --id <server id> +
+  - --force <true or false> +
+  - --purge <true or false>
 | Deletes the server
