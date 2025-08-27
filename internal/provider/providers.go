@@ -10,7 +10,7 @@ type ServerProvider interface {
 	ReadServer()
 	ListServers()
 	UpdateServer()
-	DeleteServer()
+	DeleteServer(vmid int)
 	ConfigureFromEnvironment() error
 }
 

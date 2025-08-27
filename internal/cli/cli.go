@@ -69,6 +69,15 @@ func (createCmd *CreateCmd) HandleCreate() (any, error) {
 	fmt.Printf("cores: %d\n", createCmd.Cores)
 	fmt.Printf("memory: %d\n", createCmd.Memory)
 
+	serverProvider, err := provider.New("proxmox")
+
+	if err != nil {
+		log.Fatalf("Could not create provider: %v", err)
+	}
+
+	err = serverProvider.ConfigureFromEnvironment()
+	serverProvider.CreateServer()
+
 	return struct{}{}, nil
 }
 func (getCmd *GetCmd) HandleGet() (any, error) {
@@ -105,5 +114,20 @@ func (deleteCmd *DeleteCmd) HandleDelete() (any, error) {
 
 	deleteCmd.Cmd.Parse(os.Args[2:])
 	fmt.Printf("Deleting server: %d\n", deleteCmd.Id)
+
+	serverProvider, err := provider.New("proxmox")
+
+	if err != nil {
+		log.Fatalf("Could not create provider: %v\n", err)
+	}
+
+	err = serverProvider.ConfigureFromEnvironment()
+
+	if err != nil {
+		log.Fatalf("Missing configuration: %v", err)
+	}
+
+	serverProvider.DeleteServer(deleteCmd.Id)
+
 	return struct{}{}, nil
 }
