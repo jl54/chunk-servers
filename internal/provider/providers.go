@@ -6,8 +6,8 @@ import (
 )
 
 type ServerProvider interface {
-	CreateServer() (string, error)
-	ReadServer()
+	CreateServer(name string, memory, cores int) error
+	ReadServer(id int) (VmGetResponse, error)
 	ListServers()
 	UpdateServer()
 	DeleteServer(vmid int)

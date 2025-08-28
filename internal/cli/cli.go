@@ -57,17 +57,14 @@ func Handle() {
 	}
 }
 
-func (createCmd *CreateCmd) HandleCreate() (any, error) {
+func (createCmd *CreateCmd) HandleCreate() {
 	createCmd.Cmd = *flag.NewFlagSet("create", flag.ExitOnError)
 	createCmd.Cmd.StringVar(&createCmd.Name, "name", "", "the server name")
 	createCmd.Cmd.IntVar(&createCmd.Cores, "cores", 2, "the amount of cores assigned to the server")
 	createCmd.Cmd.IntVar(&createCmd.Memory, "memory", 2048, "the amount of memory assigned to the server")
-
 	createCmd.Cmd.Parse(os.Args[2:])
-	fmt.Println("creating server with:")
-	fmt.Printf("name: %s\n", createCmd.Name)
-	fmt.Printf("cores: %d\n", createCmd.Cores)
-	fmt.Printf("memory: %d\n", createCmd.Memory)
+
+	log.Printf("Creating server: {name=%s} {memory=%d} {cores=%d}\n", createCmd.Name, createCmd.Memory, createCmd.Cores)
 
 	serverProvider, err := provider.New("proxmox")
 
@@ -76,17 +73,41 @@ func (createCmd *CreateCmd) HandleCreate() (any, error) {
 	}
 
 	err = serverProvider.ConfigureFromEnvironment()
-	serverProvider.CreateServer()
 
-	return struct{}{}, nil
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = serverProvider.CreateServer(createCmd.Name, createCmd.Memory, createCmd.Cores)
+
+	if err != nil {
+		log.Fatal(err)
+	}
 }
-func (getCmd *GetCmd) HandleGet() (any, error) {
+func (getCmd *GetCmd) HandleGet() {
 	getCmd.Cmd = *flag.NewFlagSet("create", flag.ExitOnError)
 	getCmd.Cmd.IntVar(&getCmd.Id, "id", 0, "the id of the server to get")
-
 	getCmd.Cmd.Parse(os.Args[2:])
-	fmt.Printf("Getting server: %d\n", getCmd.Id)
-	return struct{}{}, nil
+
+	log.Printf("Getting server info: {vmid=%d}\n", getCmd.Id)
+
+	serverProvider, err := provider.New("proxmox")
+
+	if err != nil {
+		log.Fatalf("Could not create provider: %v", err)
+	}
+
+	err = serverProvider.ConfigureFromEnvironment()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	serverProvider.ReadServer(getCmd.Id)
+
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 func (listCmd *ListCmd) HandleList() (any, error) {
 	listCmd.Cmd = *flag.NewFlagSet("list", flag.ExitOnError)

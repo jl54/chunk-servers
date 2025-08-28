@@ -12,28 +12,20 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type ProxmoxProvider struct {
-	Host        string
-	Port        int
-	Node        string
-	Username    string
-	TokenId     string
-	TokenSecret string
-	Client      *http.Client
-}
-
-type ProxmoxServerOptions struct {
-	Name    string
-	Memory  int
-	Cpu     string
-	Cores   int
-	Scsihw  string
-	Ide2    string
-	Scsi0   string
-	Network string
+	Host         string
+	Port         int
+	Node         string
+	Username     string
+	TokenId      string
+	TokenSecret  string
+	BaseUrl      string
+	TemplateVmId int
+	Client       *http.Client
 }
 
 type ProxmoxTaskResponse struct {
@@ -56,66 +48,110 @@ type ProxmoxTaskGetResponse struct {
 	}
 }
 
-func (proxmox *ProxmoxProvider) CreateTemplateVm(templateVmId int) {
-	// 1. create the vm
-	data := make(map[string]any)
-	data["vmid"] = templateVmId
-	data["memory"] = 1024
-	data["net0"] = "virtio,bridge=vmbr0"
-	data["scsihw"] = "virtio-scsi-pci"
-	status := "running"
-	upid, err := proxmox.Post(fmt.Sprintf("https://%s:%d/api2/json/nodes/%s/qemu", proxmox.Host, proxmox.Port, proxmox.Node), data)
+type VmArgs struct {
+	Vmid      int    `json:"vmid,omitempty"`
+	Memory    int    `json:"memory,omitempty"`
+	Cores     int    `json:"cores,omitempty"`
+	Net0      string `json:"net0,omitempty"`
+	Scsihw    string `json:"scsihw,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Scsi0     string `json:"scsi0,omitempty"`
+	Ide2      string `json:"ide2,omitempty"`
+	Cicustom  string `json:"cicustom,omitempty"`
+	Ipconfig0 string `json:"ipconfig0,omitempty"`
+	Boot      string `json:"boot,omitempty"`
+}
 
-	for status == "running" {
-		time.Sleep(1 * time.Second)
-		status = proxmox.GetTaskStatus(upid)
+type VmGetResponse struct {
+	Data struct {
+		Status string
+		Vmid   int
+	}
+}
+
+func (proxmox *ProxmoxProvider) CreateTemplateVm(templateVmId int) error {
+	// 1. create the vm
+	data := VmArgs{
+		Vmid:   templateVmId,
+		Memory: 1024,
+		Net0:   "virtio,bridge=vmbr0",
+		Scsihw: "virtio-scsi-pci",
+		Name:   "NotAnakin",
 	}
 
+	err := proxmox.createVm(data)
+
 	if err != nil {
-		log.Fatalf("Could not create template vm: %v", err)
+		return err
 	}
 
 	// 2. import the disk
-	data = make(map[string]any)
-	data["vmid"] = templateVmId
-	data["scsi0"] = "local-lvm:0,import-from=local:import/novle-server-cloudimg-amd64.qcow2"
-	data["ide2"] = "local-lvm:cloudinit"
-	data["boot"] = "order=scsi0"
-	data["cicustom"] = "user=local:snippets/userconfig.yml"
-	data["ipconfig0"] = "ip=dhcp"
-	status = "running"
-	upid, err = proxmox.Post(fmt.Sprintf("https://%s:%d/api2/json/nodes/%s/qemu/%d/config", proxmox.Host, proxmox.Port, proxmox.Node, templateVmId), data)
+	data = VmArgs{
+		Vmid:  templateVmId,
+		Scsi0: "local-lvm:0,import-from=local:import/novle-server-cloudimg-amd64.qcow2",
+	}
+
+	err = proxmox.updateVm(data)
+
+	if err != nil {
+		return err
+	}
+
+	// 3. add cloud init
+	data = VmArgs{
+		Vmid:      templateVmId,
+		Ide2:      "local-lvm:cloudinit",
+		Cicustom:  "user=local:snippets/userconfig.yml",
+		Ipconfig0: "ip=dhcp",
+		Boot:      "order=scsi0",
+	}
+
+	err = proxmox.updateVm(data)
+
+	if err != nil {
+		return err
+	}
+
+	// 4. convert to template
+	err = proxmox.convertToTemplate(templateVmId)
 
 	if err != nil {
 		log.Fatalf("proxmox request failed: %v", err)
 	}
 
-	for status == "running" {
-		time.Sleep(1 * time.Second)
-		status = proxmox.GetTaskStatus(upid)
-	}
+	return nil
+}
 
-	// 3. convert to template
-	status = "running"
-	upid, err = proxmox.Post(fmt.Sprintf("https://%s:%d/api2/json/nodes/%s/qemu/%d/template", proxmox.Host, proxmox.Port, proxmox.Node, templateVmId), nil)
+func (proxmox *ProxmoxProvider) CreateServer(name string, memory, cores int) error {
+	vmInfo, err := proxmox.ReadServer(proxmox.TemplateVmId)
 
 	if err != nil {
-		log.Fatalf("proxmox request failed: %v", err)
+		return err
 	}
 
-	for status == "running" {
-		time.Sleep(1 * time.Second)
-		status = proxmox.GetTaskStatus(upid)
+	if vmInfo.Data.Status == "missing" {
+		return proxmox.CreateTemplateVm(9001)
 	}
+
+	return nil
 }
 
-func (proxmox *ProxmoxProvider) CreateServer() (string, error) {
-	proxmox.CreateTemplateVm(9001)
-	return "", nil
-}
+func (proxmox *ProxmoxProvider) ReadServer(id int) (VmGetResponse, error) {
+	vmPath := fmt.Sprintf("%s/nodes/%s/qemu/%d/status/current", proxmox.BaseUrl, proxmox.Node, id)
+	var resObject VmGetResponse
+	err := proxmox.Get(vmPath, &resObject)
 
-func (proxmox *ProxmoxProvider) ReadServer() {
+	if err != nil {
+		if err.Error() == "VM not found" {
+			resObject.Data.Vmid = id
+			resObject.Data.Status = "missing"
+			return resObject, nil
+		}
 
+		return VmGetResponse{}, err
+	}
+
+	return resObject, nil
 }
 
 func (proxmox *ProxmoxProvider) ListServers() {
@@ -133,6 +169,7 @@ func (proxmox *ProxmoxProvider) ListServers() {
 	if err != nil {
 		log.Fatalf("proxmox request failed: %v", err)
 	}
+
 	defer resp.Body.Close()
 
 	fmt.Println("Response status:", resp.Status)
@@ -148,7 +185,7 @@ func (proxmox *ProxmoxProvider) ListServers() {
 }
 
 func (proxmox *ProxmoxProvider) UpdateServer() {
-
+	// Todo: ...
 }
 
 func (proxmox *ProxmoxProvider) DeleteServer(vmid int) {
@@ -172,6 +209,12 @@ func (proxmox *ProxmoxProvider) ConfigureFromEnvironment() error {
 		proxmox.Port = 0
 	}
 
+	proxmox.TemplateVmId, err = strconv.Atoi(os.Getenv("PVE_TEMPLATE_ID"))
+
+	if err != nil {
+		proxmox.TemplateVmId = 0
+	}
+
 	if proxmox.Host == "" {
 		return errors.New("Missing proxmox host")
 	}
@@ -192,6 +235,12 @@ func (proxmox *ProxmoxProvider) ConfigureFromEnvironment() error {
 		return errors.New("Missing proxmox port")
 	}
 
+	if proxmox.TemplateVmId == 0 {
+		return errors.New("Missing proxmox template id")
+	}
+
+	proxmox.BaseUrl = fmt.Sprintf("https://%s:%d/api2/json", proxmox.Host, proxmox.Port)
+
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
@@ -205,14 +254,12 @@ func (proxmox *ProxmoxProvider) ConfigureFromEnvironment() error {
 func (proxmox *ProxmoxProvider) GetTaskStatus(upid string) string {
 	var taskInfo ProxmoxTaskGetResponse
 	path := fmt.Sprintf("https://%s:%d/api2/json/nodes/%s/tasks/%s/status", proxmox.Host, proxmox.Port, proxmox.Node, upid)
-
 	err := proxmox.Get(path, &taskInfo)
 
 	if err != nil {
 		log.Fatalf("Errored getting task info: %v", err)
 	}
 
-	log.Println(taskInfo.Data.Status)
 	return taskInfo.Data.Status
 }
 
@@ -232,6 +279,18 @@ func (proxmox *ProxmoxProvider) Get(path string, resObject any) error {
 		return err
 	}
 
+	if res.StatusCode >= 500 {
+		var resBody []byte
+		resBody, err = io.ReadAll(res.Body)
+		defer res.Body.Close()
+
+		if strings.Contains(string(resBody), "conf' does not exist") {
+			return errors.New("VM not found")
+		}
+
+		return errors.New("500 Internal Server error")
+	}
+
 	defer res.Body.Close()
 
 	var resBody []byte
@@ -245,66 +304,34 @@ func (proxmox *ProxmoxProvider) Get(path string, resObject any) error {
 	return nil
 }
 
-func (proxmox *ProxmoxProvider) Post(path string, data any) (string, error) {
-	var err error
-	var body io.Reader
-	var req *http.Request
-	var jsonData []byte
-	jsonData, err = json.Marshal(data)
+func (proxmox *ProxmoxProvider) Post(path string, reqData any, resData any) error {
+	body, err := proxmox.getJsonBodyFromData(reqData)
 
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	body = bytes.NewBuffer(jsonData)
-	req, err = http.NewRequest(http.MethodPost, path, body)
+	req, err := http.NewRequest(http.MethodPost, path, body)
 
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	req.Header.Add("Authorization", fmt.Sprintf("Authorization: PVEAPIToken=%s=%s", proxmox.TokenId, proxmox.TokenSecret))
 	req.Header.Add("Content-Type", "application/json")
-	var res *http.Response
-	res, err = proxmox.Client.Do(req)
+
+	res, err := proxmox.Client.Do(req)
 
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	defer res.Body.Close()
 
-	log.Println(res.StatusCode)
-	var resBody []byte
-	resBody, err = io.ReadAll(res.Body)
-	log.Println(string(resBody))
+	var resJsonString []byte
+	resJsonString, err = io.ReadAll(res.Body)
 
-	var resJson ProxmoxTaskResponse
-	err = json.Unmarshal(resBody, &resJson)
-
-	if err != nil {
-		log.Fatalf("Errored unmarshaling json: %v", err)
-	}
-
-	log.Println(resJson.Data)
-
-	// var resJson map[string]json.RawMessage
-	// err = json.Unmarshal(resBody, &resJson)
-	//
-	// if err != nil {
-	// 	return "", err
-	// }
-	//
-	// var resData []byte
-	// err = json.Unmarshal(resJson["data"], &resData)
-	//
-	// if err != nil {
-	// 	return "", err
-	// }
-	//
-	// fmt.Println(string(resData))
-	return resJson.Data, nil
-
+	return proxmox.getDataFromJsonResponse(resJsonString, resData)
 }
 
 func (proxmox *ProxmoxProvider) Delete(path string) error {
@@ -316,6 +343,84 @@ func (proxmox *ProxmoxProvider) Delete(path string) error {
 
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (proxmox *ProxmoxProvider) getJsonBodyFromData(data any) (*bytes.Buffer, error) {
+	json, err := json.Marshal(data)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return bytes.NewBuffer(json), nil
+}
+
+func (proxmox *ProxmoxProvider) getDataFromJsonResponse(jsonData []byte, data any) error {
+	return json.Unmarshal(jsonData, data)
+}
+
+func (proxmox *ProxmoxProvider) createVm(data VmArgs) error {
+	createPath := fmt.Sprintf("https://%s:%d/api2/json/nodes/%s/qemu", proxmox.Host, proxmox.Port, proxmox.Node)
+	var resData ProxmoxTaskResponse
+	err := proxmox.Post(
+		createPath,
+		data,
+		&resData,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	status := "running"
+	upid := resData.Data
+
+	for status == "running" {
+		time.Sleep(1 * time.Second)
+		status = proxmox.GetTaskStatus(upid)
+	}
+
+	return nil
+}
+
+func (proxmox *ProxmoxProvider) updateVm(data VmArgs) error {
+	configPath := fmt.Sprintf("%s/nodes/%s/qemu/%d/config", proxmox.BaseUrl, proxmox.Node, data.Vmid)
+	var resData ProxmoxTaskResponse
+	err := proxmox.Post(configPath, data, &resData)
+
+	if err != nil {
+		return err
+	}
+
+	upid := resData.Data
+	status := "running"
+
+	for status == "running" {
+		time.Sleep(1 * time.Second)
+		status = proxmox.GetTaskStatus(upid)
+	}
+
+	return nil
+}
+
+func (proxmox *ProxmoxProvider) convertToTemplate(vmid int) error {
+	convertToTemplatePath := fmt.Sprintf("%s/nodes/%s/qemu/%d/template", proxmox.BaseUrl, proxmox.Node, vmid)
+	var resData ProxmoxTaskResponse
+	err := proxmox.Post(convertToTemplatePath, nil, &resData)
+
+	if err != nil {
+		return err
+	}
+
+	upid := resData.Data
+	status := "running"
+
+	for status == "running" {
+		time.Sleep(1 * time.Second)
+		status = proxmox.GetTaskStatus(upid)
 	}
 
 	return nil
