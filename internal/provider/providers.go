@@ -8,9 +8,9 @@ import (
 type ServerProvider interface {
 	CreateServer(name string, memory, cores int) error
 	ReadServer(id int) (VmGetResponse, error)
-	ListServers()
+	ListServers() (VmListResponse, error)
 	UpdateServer()
-	DeleteServer(vmid int)
+	DeleteServer(vmid int, force, purge bool) error
 	ConfigureFromEnvironment() error
 }
 

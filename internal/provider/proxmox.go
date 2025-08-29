@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
@@ -60,16 +59,37 @@ type VmArgs struct {
 	Cicustom  string `json:"cicustom,omitempty"`
 	Ipconfig0 string `json:"ipconfig0,omitempty"`
 	Boot      string `json:"boot,omitempty"`
+	Agent     string `json:"agent,omitempty"`
+	Serial0   string `json:"serial0,omitempty"`
+	Vga       string `json:"vga,omitempty"`
+}
+
+type VmResponse struct {
+	Vmid   int
+	Status string
 }
 
 type VmGetResponse struct {
-	Data struct {
-		Status string
-		Vmid   int
-	}
+	Data VmResponse
+}
+
+type VmListResponse struct {
+	Data []VmResponse
+}
+
+type NextIdResponse struct {
+	Data string
+}
+
+type VmCloneArgs struct {
+	Newid int    `json:"newid"`
+	Node  string `json:"node"`
+	Vmid  int    `json:"vmid"`
+	Full  bool   `json:"full,omitempty"`
 }
 
 func (proxmox *ProxmoxProvider) CreateTemplateVm(templateVmId int) error {
+	log.Println("Creating template VM ...")
 	// 1. create the vm
 	data := VmArgs{
 		Vmid:   templateVmId,
@@ -104,6 +124,9 @@ func (proxmox *ProxmoxProvider) CreateTemplateVm(templateVmId int) error {
 		Cicustom:  "user=local:snippets/userconfig.yml",
 		Ipconfig0: "ip=dhcp",
 		Boot:      "order=scsi0",
+		Agent:     "enabled=1,type=virtio",
+		Serial0:   "socket",
+		Vga:       "serial0",
 	}
 
 	err = proxmox.updateVm(data)
@@ -130,13 +153,54 @@ func (proxmox *ProxmoxProvider) CreateServer(name string, memory, cores int) err
 	}
 
 	if vmInfo.Data.Status == "missing" {
-		return proxmox.CreateTemplateVm(9001)
+		log.Println("Template VM is missing ...")
+
+		err = proxmox.CreateTemplateVm(proxmox.TemplateVmId)
+
+		if err != nil {
+			return err
+		}
 	}
 
-	return nil
+	nextId, err := proxmox.getNextVmId()
+
+	if err != nil {
+		return err
+	}
+
+	cloneData := VmCloneArgs{
+		Newid: nextId,
+		Node:  proxmox.Node,
+		Vmid:  proxmox.TemplateVmId,
+		Full:  true,
+	}
+
+	err = proxmox.cloneVm(cloneData)
+
+	if err != nil {
+		return err
+	}
+
+	updateData := VmArgs{
+		Vmid:   nextId,
+		Name:   name,
+		Memory: memory,
+		Cores:  cores,
+	}
+
+	err = proxmox.updateVm(updateData)
+
+	if err != nil {
+		return err
+	}
+
+	err = proxmox.startVm(nextId)
+
+	return err
 }
 
 func (proxmox *ProxmoxProvider) ReadServer(id int) (VmGetResponse, error) {
+	log.Printf("Getting VM Information for %d ...", id)
 	vmPath := fmt.Sprintf("%s/nodes/%s/qemu/%d/status/current", proxmox.BaseUrl, proxmox.Node, id)
 	var resObject VmGetResponse
 	err := proxmox.Get(vmPath, &resObject)
@@ -154,46 +218,44 @@ func (proxmox *ProxmoxProvider) ReadServer(id int) (VmGetResponse, error) {
 	return resObject, nil
 }
 
-func (proxmox *ProxmoxProvider) ListServers() {
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s:%d/api2/json/nodes/%s/qemu", proxmox.Host, proxmox.Port, proxmox.Node), nil)
+func (proxmox *ProxmoxProvider) ListServers() (VmListResponse, error) {
+	log.Println("Listing servers ...")
+	listPath := fmt.Sprintf("%s/nodes/%s/qemu", proxmox.BaseUrl, proxmox.Node)
+	var resObject VmListResponse
+	err := proxmox.Get(listPath, &resObject)
 
 	if err != nil {
-		log.Fatalf("proxmox request failed: %v", err)
+		return VmListResponse{}, err
 	}
 
-	req.Header.Add("Authorization", fmt.Sprintf("Authorization: PVEAPIToken=%s=%s", proxmox.TokenId, proxmox.TokenSecret))
-	resp, err := client.Do(req)
-
-	if err != nil {
-		log.Fatalf("proxmox request failed: %v", err)
-	}
-
-	defer resp.Body.Close()
-
-	fmt.Println("Response status:", resp.Status)
-	scanner := bufio.NewScanner(resp.Body)
-
-	for i := 0; scanner.Scan() && i < 5; i++ {
-		fmt.Println(scanner.Text())
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("proxmox request failed: %v", err)
-	}
+	return resObject, nil
 }
 
 func (proxmox *ProxmoxProvider) UpdateServer() {
 	// Todo: ...
 }
 
-func (proxmox *ProxmoxProvider) DeleteServer(vmid int) {
-	err := proxmox.Delete(fmt.Sprintf("https://%s:%d/api2/json/nodes/%s/qemu/%d", proxmox.Host, proxmox.Port, proxmox.Node, vmid))
+func (proxmox *ProxmoxProvider) DeleteServer(vmid int, force, purge bool) error {
+	log.Printf("Deleting server %d ...\n", vmid)
+	if force == true {
+		err := proxmox.stopVm(vmid)
 
-	if err != nil {
-		log.Fatalf("Error deleting server: %v", err)
+		if err != nil {
+			return err
+		}
 	}
+
+	deletePath := fmt.Sprintf("%s/nodes/%s/qemu/%d", proxmox.BaseUrl, proxmox.Node, vmid)
+
+	if purge == true {
+		deletePath = fmt.Sprintf("%s?purge=1&destroy-unreferenced-disks=1", deletePath)
+	} else {
+		deletePath = fmt.Sprintf("%s?destroy-unreferenced-disks=1", deletePath)
+	}
+
+	err := proxmox.Delete(deletePath)
+
+	return err
 }
 
 func (proxmox *ProxmoxProvider) ConfigureFromEnvironment() error {
@@ -288,6 +350,7 @@ func (proxmox *ProxmoxProvider) Get(path string, resObject any) error {
 			return errors.New("VM not found")
 		}
 
+		log.Println(string(resBody))
 		return errors.New("500 Internal Server error")
 	}
 
@@ -339,11 +402,13 @@ func (proxmox *ProxmoxProvider) Delete(path string) error {
 	req.Header.Add("Authorization", fmt.Sprintf("Authorization: PVEAPIToken=%s=%s", proxmox.TokenId, proxmox.TokenSecret))
 	req.Header.Add("Accept", "application/json")
 
-	_, err = proxmox.Client.Do(req)
+	res, err := proxmox.Client.Do(req)
 
 	if err != nil {
 		return err
 	}
+
+	defer res.Body.Close()
 
 	return nil
 }
@@ -387,6 +452,7 @@ func (proxmox *ProxmoxProvider) createVm(data VmArgs) error {
 }
 
 func (proxmox *ProxmoxProvider) updateVm(data VmArgs) error {
+	log.Printf("Updating VM %d ...\n", data.Vmid)
 	configPath := fmt.Sprintf("%s/nodes/%s/qemu/%d/config", proxmox.BaseUrl, proxmox.Node, data.Vmid)
 	var resData ProxmoxTaskResponse
 	err := proxmox.Post(configPath, data, &resData)
@@ -407,9 +473,107 @@ func (proxmox *ProxmoxProvider) updateVm(data VmArgs) error {
 }
 
 func (proxmox *ProxmoxProvider) convertToTemplate(vmid int) error {
+	log.Printf("Converting VM %d to template ...\n", vmid)
 	convertToTemplatePath := fmt.Sprintf("%s/nodes/%s/qemu/%d/template", proxmox.BaseUrl, proxmox.Node, vmid)
 	var resData ProxmoxTaskResponse
 	err := proxmox.Post(convertToTemplatePath, nil, &resData)
+
+	if err != nil {
+		return err
+	}
+
+	upid := resData.Data
+	status := "running"
+
+	for status == "running" {
+		time.Sleep(1 * time.Second)
+		status = proxmox.GetTaskStatus(upid)
+	}
+
+	return nil
+}
+
+func (proxmox *ProxmoxProvider) getNextVmId() (int, error) {
+	log.Println("Getting next VM id ...")
+	path := fmt.Sprintf("%s/cluster/nextid", proxmox.BaseUrl)
+
+	var resObject NextIdResponse
+	err := proxmox.Get(path, &resObject)
+
+	if err != nil {
+		return 0, err
+	}
+
+	vmid, err := strconv.Atoi(resObject.Data)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return vmid, nil
+}
+
+func (proxmox *ProxmoxProvider) cloneVm(data VmCloneArgs) error {
+	log.Println("Cloning Template VM ...")
+	var resData ProxmoxTaskResponse
+	clonePath := fmt.Sprintf("%s/nodes/%s/qemu/%d/clone", proxmox.BaseUrl, proxmox.Node, proxmox.TemplateVmId)
+	err := proxmox.Post(clonePath, data, &resData)
+
+	if err != nil {
+		return err
+	}
+
+	upid := resData.Data
+	status := "running"
+
+	for status == "running" {
+		time.Sleep(1 * time.Second)
+		status = proxmox.GetTaskStatus(upid)
+	}
+
+	return nil
+}
+
+func (proxmox *ProxmoxProvider) startVm(vmid int) error {
+	log.Printf("Starting VM %d ...\n", vmid)
+	startData := struct {
+		Vmid int    `json:"vmid"`
+		Node string `json:"node"`
+	}{
+		Vmid: vmid,
+		Node: proxmox.Node,
+	}
+	var resData ProxmoxTaskResponse
+	startPath := fmt.Sprintf("%s/nodes/%s/qemu/%d/status/start", proxmox.BaseUrl, proxmox.Node, vmid)
+	err := proxmox.Post(startPath, startData, &resData)
+
+	if err != nil {
+		return err
+	}
+
+	upid := resData.Data
+	status := "running"
+
+	for status == "running" {
+		time.Sleep(1 * time.Second)
+		status = proxmox.GetTaskStatus(upid)
+	}
+
+	return nil
+}
+
+func (proxmox *ProxmoxProvider) stopVm(vmid int) error {
+	log.Printf("Stopping VM %d ...\n", vmid)
+	stopData := struct {
+		Vmid int    `json:"vmid"`
+		Node string `json:"node"`
+	}{
+		Vmid: vmid,
+		Node: proxmox.Node,
+	}
+	var resData ProxmoxTaskResponse
+	stopPath := fmt.Sprintf("%s/nodes/%s/qemu/%d/status/stop", proxmox.BaseUrl, proxmox.Node, vmid)
+	err := proxmox.Post(stopPath, stopData, &resData)
 
 	if err != nil {
 		return err
