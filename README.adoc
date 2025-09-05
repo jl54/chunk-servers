@@ -12,7 +12,7 @@ The CLI-Tool to create minecraft servers on different providers.
 | - --name <server name> +
   - --cores <amount of cores> +
   - --memory <amount of memory>
-| Createas a new minecraft server
+| Creates a new minecraft server
 
 | get
 | - --id <server id> +

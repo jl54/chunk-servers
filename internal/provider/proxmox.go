@@ -95,7 +95,7 @@ type IpAddress struct {
 }
 
 type NetworkGetInterfaces struct {
-	IpAdresses      []IpAddress `json:"ip-addresses"`
+	IpAddresses     []IpAddress `json:"ip-addresses"`
 	Name            string      `json:"name"`
 	HardwareAddress string      `json:"hardware-address"`
 	Statistics      struct {
@@ -646,7 +646,7 @@ func (proxmox *ProxmoxProvider) getIpAddress(vmid int) (string, error) {
 
 	for _, iface := range resData.Data.Result {
 		if iface.Name == "eth0" {
-			for _, addr := range iface.IpAdresses {
+			for _, addr := range iface.IpAddresses {
 				if addr.IpAddressType == "ipv4" {
 					ipAddress = addr.IpAddress
 					break
