@@ -16,15 +16,16 @@ import (
 )
 
 type ProxmoxProvider struct {
-	Host         string
-	Port         int
-	Node         string
-	Username     string
-	TokenId      string
-	TokenSecret  string
-	BaseUrl      string
-	TemplateVmId int
-	Client       *http.Client
+	Host               string
+	Port               int
+	Node               string
+	Username           string
+	TokenId            string
+	TokenSecret        string
+	InsecureSkipVerify bool
+	BaseUrl            string
+	TemplateVmId       int
+	Client             *http.Client
 }
 
 type ProxmoxTaskResponse struct {
@@ -312,6 +313,12 @@ func (proxmox *ProxmoxProvider) ConfigureFromEnvironment() error {
 		proxmox.Port = 0
 	}
 
+	proxmox.InsecureSkipVerify, err = strconv.ParseBool(os.Getenv("PVE_INSECURE_SKIP_VERIFY"))
+
+	if err != nil {
+		proxmox.InsecureSkipVerify = false
+	}
+
 	proxmox.TemplateVmId, err = strconv.Atoi(os.Getenv("PVE_TEMPLATE_ID"))
 
 	if err != nil {
@@ -345,7 +352,7 @@ func (proxmox *ProxmoxProvider) ConfigureFromEnvironment() error {
 	proxmox.BaseUrl = fmt.Sprintf("https://%s:%d/api2/json", proxmox.Host, proxmox.Port)
 
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: proxmox.InsecureSkipVerify},
 	}
 	proxmox.Client = &http.Client{
 		Transport: transport,
