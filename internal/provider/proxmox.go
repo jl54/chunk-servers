@@ -88,6 +88,34 @@ type VmCloneArgs struct {
 	Full  bool   `json:"full,omitempty"`
 }
 
+type IpAddress struct {
+	IpAddressType string `json:"ip-address-type"`
+	IpAddress     string `json:"ip-address"`
+	Prefix        int    `json:"prefix"`
+}
+
+type NetworkGetInterfaces struct {
+	IpAdresses      []IpAddress `json:"ip-addresses"`
+	Name            string      `json:"name"`
+	HardwareAddress string      `json:"hardware-address"`
+	Statistics      struct {
+		RxBytes   int `json:"rx-bytes"`
+		RxErrs    int `json:"rx-errs"`
+		RxDropped int `json:"rx-dropped"`
+		RxPackets int `json:"rx-packets"`
+		TxDropped int `json:"tx-dropped"`
+		TxErrs    int `json:"tx-errs"`
+		TxPackets int `json:"tx-packets"`
+		TxBytes   int `json:"tx-bytes"`
+	} `json:"statistics"`
+}
+
+type NetworkGetInterfacesResponse struct {
+	Data struct {
+		Result []NetworkGetInterfaces `json:"result"`
+	}
+}
+
 func (proxmox *ProxmoxProvider) CreateTemplateVm(templateVmId int) error {
 	log.Println("Creating template VM ...")
 	// 1. create the vm
@@ -195,6 +223,19 @@ func (proxmox *ProxmoxProvider) CreateServer(name string, memory, cores int) err
 	}
 
 	err = proxmox.startVm(nextId)
+
+	if err != nil {
+		return err
+	}
+
+	var ip string
+	ip, err = proxmox.waitForIp(nextId, 600)
+
+	if err != nil {
+		return err
+	}
+
+	log.Printf("VM %s {id=%d} {ip=%s} created\n", name, nextId, ip)
 
 	return err
 }
@@ -351,7 +392,7 @@ func (proxmox *ProxmoxProvider) Get(path string, resObject any) error {
 		}
 
 		log.Println(string(resBody))
-		return errors.New("500 Internal Server error")
+		return err
 	}
 
 	defer res.Body.Close()
@@ -588,4 +629,65 @@ func (proxmox *ProxmoxProvider) stopVm(vmid int) error {
 	}
 
 	return nil
+}
+
+func (proxmox *ProxmoxProvider) getIpAddress(vmid int) (string, error) {
+	log.Printf("Getting ip address for %d\n", vmid)
+
+	var resData NetworkGetInterfacesResponse
+	networkInterfacesPath := fmt.Sprintf("%s/nodes/%s/qemu/%d/agent/network-get-interfaces", proxmox.BaseUrl, proxmox.Node, vmid)
+	err := proxmox.Get(networkInterfacesPath, &resData)
+
+	if err != nil {
+		return "", err
+	}
+
+	ipAddress := ""
+
+	for _, iface := range resData.Data.Result {
+		if iface.Name == "eth0" {
+			for _, addr := range iface.IpAdresses {
+				if addr.IpAddressType == "ipv4" {
+					ipAddress = addr.IpAddress
+					break
+				}
+			}
+		}
+	}
+
+	if ipAddress == "" {
+		return "", errors.New("No ip address assigned to vm")
+	}
+
+	return ipAddress, nil
+
+}
+
+func (proxmox *ProxmoxProvider) waitForIp(vmid int, timeout int) (string, error) {
+	timeElapsed := 0
+	ip := ""
+
+	for timeElapsed < timeout {
+		time.Sleep(10 * time.Second)
+		timeElapsed += 10
+
+		var err error
+		ip, err = proxmox.getIpAddress(vmid)
+
+		if err != nil {
+			if err.Error() == "No ip address assigned to vm" {
+				continue
+			}
+
+			if strings.Contains(err.Error(), "QEMU guest agent is not running") {
+				continue
+			}
+
+			return "", err
+		}
+
+		break
+	}
+
+	return ip, nil
 }
