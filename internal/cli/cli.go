@@ -85,7 +85,7 @@ func (createCmd *CreateCmd) HandleCreate() {
 	}
 }
 func (getCmd *GetCmd) HandleGet() {
-	getCmd.Cmd = *flag.NewFlagSet("create", flag.ExitOnError)
+	getCmd.Cmd = *flag.NewFlagSet("get", flag.ExitOnError)
 	getCmd.Cmd.IntVar(&getCmd.Id, "id", 0, "the id of the server to get")
 	getCmd.Cmd.Parse(os.Args[2:])
 
