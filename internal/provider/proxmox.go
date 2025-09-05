@@ -380,7 +380,7 @@ func (proxmox *ProxmoxProvider) Get(path string, resObject any) error {
 		return err
 	}
 
-	req.Header.Add("Authorization", fmt.Sprintf("Authorization: PVEAPIToken=%s=%s", proxmox.TokenId, proxmox.TokenSecret))
+	req.Header.Add("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", proxmox.TokenId, proxmox.TokenSecret))
 	req.Header.Add("Accept", "application/json")
 	var res *http.Response
 	res, err = proxmox.Client.Do(req)
@@ -428,7 +428,7 @@ func (proxmox *ProxmoxProvider) Post(path string, reqData any, resData any) erro
 		return err
 	}
 
-	req.Header.Add("Authorization", fmt.Sprintf("Authorization: PVEAPIToken=%s=%s", proxmox.TokenId, proxmox.TokenSecret))
+	req.Header.Add("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", proxmox.TokenId, proxmox.TokenSecret))
 	req.Header.Add("Content-Type", "application/json")
 
 	res, err := proxmox.Client.Do(req)
@@ -447,7 +447,7 @@ func (proxmox *ProxmoxProvider) Post(path string, reqData any, resData any) erro
 
 func (proxmox *ProxmoxProvider) Delete(path string) error {
 	req, err := http.NewRequest(http.MethodDelete, path, nil)
-	req.Header.Add("Authorization", fmt.Sprintf("Authorization: PVEAPIToken=%s=%s", proxmox.TokenId, proxmox.TokenSecret))
+	req.Header.Add("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", proxmox.TokenId, proxmox.TokenSecret))
 	req.Header.Add("Accept", "application/json")
 
 	res, err := proxmox.Client.Do(req)
