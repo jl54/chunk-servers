@@ -398,7 +398,6 @@ func (proxmox *ProxmoxProvider) Get(path string, resObject any) error {
 			return errors.New("VM not found")
 		}
 
-		log.Println(string(resBody))
 		return err
 	}
 
