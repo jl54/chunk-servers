@@ -279,7 +279,7 @@ func (proxmox *ProxmoxProvider) UpdateServer() {
 
 func (proxmox *ProxmoxProvider) DeleteServer(vmid int, force, purge bool) error {
 	log.Printf("Deleting server %d ...\n", vmid)
-	if force == true {
+	if force {
 		err := proxmox.stopVm(vmid)
 
 		if err != nil {
@@ -289,7 +289,7 @@ func (proxmox *ProxmoxProvider) DeleteServer(vmid int, force, purge bool) error 
 
 	deletePath := fmt.Sprintf("%s/nodes/%s/qemu/%d", proxmox.BaseUrl, proxmox.Node, vmid)
 
-	if purge == true {
+	if purge {
 		deletePath = fmt.Sprintf("%s?purge=1&destroy-unreferenced-disks=1", deletePath)
 	} else {
 		deletePath = fmt.Sprintf("%s?destroy-unreferenced-disks=1", deletePath)
