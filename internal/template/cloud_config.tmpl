@@ -1,0 +1,14 @@
+#cloud-config
+write_files:
+  - path: /opt/minecraft/.env
+    content: |
+      EULA={{ .Eula }}
+      TYPE={{ .Type }}
+      SERVER_NAME={{ .ServerName }}
+      MEMORY={{ .Memory }}
+      MOTD={{ .Motd }}
+      MODPACK_PLATFORM={{ .ModpackPlatform }}
+      CF_API_KEY={{ .CfApiKey }}
+      CF_PAGE_URL={{ .CfPageUrl }}
+      
+

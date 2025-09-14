@@ -1,0 +1,4 @@
+root = true
+
+[*.tmpl]
+indent_size = 2

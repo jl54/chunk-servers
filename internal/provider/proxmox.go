@@ -697,3 +697,7 @@ func (proxmox *ProxmoxProvider) waitForIp(vmid int, timeout int) (string, error)
 
 	return ip, nil
 }
+
+func (proxmox *ProxmoxProvider) writeCloudConfig() {
+
+}
