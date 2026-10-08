@@ -1,7 +1,18 @@
 package main
 
-import "log"
+import (
+	"log"
+
+	"github.com/jl54/chunk-servers/internal/cli"
+	"github.com/joho/godotenv"
+)
 
 func main() {
-	log.Println("Hello")
+	err := godotenv.Load()
+
+	if err != nil {
+		log.Fatalf("Error loading .env file: %v", err)
+	}
+
+	cli.Handle()
 }
